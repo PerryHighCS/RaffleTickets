@@ -11,15 +11,18 @@ interface Props {
   studentId: string
   initialAnswer?: AnswerPayload | null
   activeQuestionRunStartedAt?: number | null
+  activeQuestionDeadlineAt?: number | null
   disabled?: boolean
   isSubmitted?: boolean
   submittedMessage?: string
   announceSubmittedMessage?: boolean
+  onDraftChanged?(questionId: string, answer: AnswerPayload | null): void
   onSubmitted?(questionId: string, answer: AnswerPayload): void
   sendMessage?(type: string, payload: unknown): boolean
 }
 
 const DRAFT_PUSH_DELAY_MS = 1500
+const DRAFT_DEADLINE_BUFFER_MS = 100
 
 function isSameAnswer(left: AnswerPayload | null, right: AnswerPayload | null): boolean {
   if (left === right) return true
@@ -37,10 +40,12 @@ export default function QuestionView({
   studentId,
   initialAnswer = null,
   activeQuestionRunStartedAt = null,
+  activeQuestionDeadlineAt = null,
   disabled = false,
   isSubmitted = false,
   submittedMessage = 'Answer submitted.',
   announceSubmittedMessage = true,
+  onDraftChanged,
   onSubmitted,
   sendMessage,
 }: Props) {
@@ -50,9 +55,12 @@ export default function QuestionView({
   const lastSentDraftRef = useRef<AnswerPayload | null>(null)
   const initialAnswerRef = useRef(initialAnswer)
   const synchronizedInitialAnswerRef = useRef(initialAnswer)
+  const submissionAttemptRef = useRef(0)
+  const disabledRef = useRef(disabled)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
-  const draftAnswerRunStartedAtRef = useRef(activeQuestionRunStartedAt)
+  const draftAnswerRunStartedAtRef = useRef<number | null>(null)
   initialAnswerRef.current = initialAnswer
+  disabledRef.current = disabled
   activeQuestionRunStartedAtRef.current = activeQuestionRunStartedAt
   const isWaitingForChoices =
     question.type === 'multiple-choice' && question.choicesRevealed === false
@@ -61,7 +69,17 @@ export default function QuestionView({
     setDraftAnswer(initialAnswerRef.current)
     lastSentDraftRef.current = initialAnswerRef.current
     synchronizedInitialAnswerRef.current = initialAnswerRef.current
+    draftAnswerRunStartedAtRef.current = null
   }, [question.id, activeQuestionRunStartedAt, isSubmitted])
+
+  useEffect(() => {
+    submissionAttemptRef.current += 1
+    setSubmitting(false)
+    setError(null)
+    return () => {
+      submissionAttemptRef.current += 1
+    }
+  }, [question.id, activeQuestionRunStartedAt, sessionId, studentId])
 
   useEffect(() => {
     if (isSameAnswer(draftAnswer, synchronizedInitialAnswerRef.current)) {
@@ -75,6 +93,7 @@ export default function QuestionView({
     const draftAnswerRunStartedAt = draftAnswerRunStartedAtRef.current
     if (
       draftAnswerRunStartedAt !== activeQuestionRunStartedAt ||
+      disabled ||
       isWaitingForChoices ||
       isSubmitted ||
       !sendMessage ||
@@ -88,6 +107,7 @@ export default function QuestionView({
       const sent = sendMessage('resonance:update-draft', {
         studentId,
         questionId: question.id,
+        activeQuestionRunStartedAt,
         answer: pendingDraft,
       })
       if (sent) {
@@ -95,53 +115,64 @@ export default function QuestionView({
       }
     }
 
+    const remainingBeforeDeadline = activeQuestionDeadlineAt === null
+      ? null
+      : activeQuestionDeadlineAt - Date.now()
+    if (remainingBeforeDeadline !== null && remainingBeforeDeadline <= 0) {
+      return
+    }
+    const pushDelayMs = remainingBeforeDeadline === null
+      ? DRAFT_PUSH_DELAY_MS
+      : Math.max(0, Math.min(DRAFT_PUSH_DELAY_MS, remainingBeforeDeadline - DRAFT_DEADLINE_BUFFER_MS))
     const timeoutId = window.setTimeout(() => {
       sendDraft()
-    }, DRAFT_PUSH_DELAY_MS)
+    }, pushDelayMs)
 
     return () => {
       window.clearTimeout(timeoutId)
       if (
         activeQuestionRunStartedAtRef.current === activeQuestionRunStartedAt &&
         draftAnswerRunStartedAt === activeQuestionRunStartedAt &&
+        !disabledRef.current &&
         !isSameAnswer(pendingDraft, lastSentDraftRef.current)
       ) {
         sendDraft()
       }
     }
-  }, [activeQuestionRunStartedAt, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
+  }, [activeQuestionDeadlineAt, activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
 
-  async function submitAnswer(answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] }) {
+  async function submitAnswer(
+    answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] },
+  ) {
     if (disabled || isSubmitted || isWaitingForChoices) {
       return
     }
 
     setSubmitting(true)
     setError(null)
-
-    const sentViaWs = sendMessage?.('resonance:submit-answer', {
-      studentId,
-      questionId: question.id,
-      answer,
-    }) ?? false
-
-    if (sentViaWs) {
-      onSubmitted?.(question.id, answer)
-      setDraftAnswer(answer)
-      lastSentDraftRef.current = answer
-      draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-      setSubmitting(false)
-      return
-    }
+    const submissionAttempt = ++submissionAttemptRef.current
+    const submissionRunStartedAt = activeQuestionRunStartedAtRef.current
 
     try {
       const resp = await fetch(`/api/resonance/${sessionId}/submit-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId, questionId: question.id, answer }),
+        body: JSON.stringify({
+          studentId,
+          questionId: question.id,
+          activeQuestionRunStartedAt: submissionRunStartedAt,
+          answer,
+        }),
       })
 
       const data = (await resp.json()) as { ok?: boolean; error?: string }
+
+      if (
+        submissionAttempt !== submissionAttemptRef.current ||
+        submissionRunStartedAt !== activeQuestionRunStartedAtRef.current
+      ) {
+        return
+      }
 
       if (!resp.ok) {
         setError(data.error ?? 'Submission failed — please try again')
@@ -154,9 +185,19 @@ export default function QuestionView({
       lastSentDraftRef.current = answer
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
     } catch {
-      setError('Network error — please try again')
+      if (
+        submissionAttempt === submissionAttemptRef.current &&
+        submissionRunStartedAt === activeQuestionRunStartedAtRef.current
+      ) {
+        setError('Network error — please try again')
+      }
     } finally {
-      setSubmitting(false)
+      if (
+        submissionAttempt === submissionAttemptRef.current &&
+        submissionRunStartedAt === activeQuestionRunStartedAtRef.current
+      ) {
+        setSubmitting(false)
+      }
     }
   }
 
@@ -174,8 +215,10 @@ export default function QuestionView({
           value={draftAnswer?.type === 'free-response' ? draftAnswer.text : ''}
           onDraftChange={(text) => {
             const trimmed = text.trim()
+            const answer = trimmed.length > 0 ? { type: 'free-response' as const, text: trimmed } : null
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            setDraftAnswer(trimmed.length > 0 ? { type: 'free-response', text: trimmed } : null)
+            setDraftAnswer(answer)
+            onDraftChanged?.(question.id, answer)
           }}
           onSubmit={(text) => submitAnswer({ type: 'free-response', text })}
           submitting={submitting || disabled}
@@ -189,8 +232,12 @@ export default function QuestionView({
           selectionMode={question.selectionMode}
           value={draftAnswer?.type === 'multiple-choice' ? draftAnswer.selectedOptionIds : []}
           onDraftChange={(selectedOptionIds) => {
+            const answer = selectedOptionIds.length > 0
+              ? { type: 'multiple-choice' as const, selectedOptionIds }
+              : null
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            setDraftAnswer(selectedOptionIds.length > 0 ? { type: 'multiple-choice', selectedOptionIds } : null)
+            setDraftAnswer(answer)
+            onDraftChanged?.(question.id, answer)
           }}
           onSubmit={(selectedOptionIds) => submitAnswer({ type: 'multiple-choice', selectedOptionIds })}
           submitting={submitting || disabled}

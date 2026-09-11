@@ -1,11 +1,60 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolveNextSelfPacedQuestionId } from './ResonanceStudent.js'
+import { clearLiveQuestionSubmission, resolveQuestionAnswer } from './ResonanceStudent.js'
 import { resolveQuestionStatusBadge } from './ResonanceStudent.js'
 import { resolveSubmissionAnnouncement } from './ResonanceStudent.js'
 import { resolveSelfPacedSubmittedMessage } from './ResonanceStudent.js'
 import { hasActiveQuestionRunRestart } from './ResonanceStudent.js'
-import { shouldUseLocalSubmittedAnswer } from './ResonanceStudent.js'
+
+void test('clearLiveQuestionSubmission unlocks a revisited live question only', () => {
+  const submittedQuestionIds = new Set(['q1', 'q2'])
+
+  assert.deepEqual(
+    clearLiveQuestionSubmission({
+      selfPacedMode: false,
+      submittedQuestionIds,
+      questionId: 'q1',
+    }),
+    new Set(['q2']),
+  )
+  assert.equal(
+    clearLiveQuestionSubmission({
+      selfPacedMode: true,
+      submittedQuestionIds,
+      questionId: 'q1',
+    }),
+    submittedQuestionIds,
+  )
+})
+
+void test('resolveQuestionAnswer preserves a revised local draft over an older snapshot answer', () => {
+  assert.deepEqual(
+    resolveQuestionAnswer({
+      localAnswers: {
+        q1: { type: 'free-response', text: 'Revised answer' },
+      },
+      snapshotAnswers: {
+        q1: { type: 'free-response', text: 'Previously submitted answer' },
+      },
+      questionId: 'q1',
+    }),
+    { type: 'free-response', text: 'Revised answer' },
+  )
+})
+
+void test('resolveQuestionAnswer preserves an intentionally cleared local draft', () => {
+  assert.equal(
+    resolveQuestionAnswer({
+      localAnswers: { q1: null },
+      snapshotAnswers: {
+        q1: { type: 'free-response', text: 'Previously submitted answer' },
+      },
+      questionId: 'q1',
+    }),
+    null,
+  )
+})
 
 void test('resolveNextSelfPacedQuestionId advances to the next unanswered question', () => {
   assert.equal(
@@ -126,20 +175,5 @@ void test('hasActiveQuestionRunRestart ignores the initial live snapshot but det
       previousActiveQuestionRunStartedAt: null,
     }),
     true,
-  )
-})
-
-void test('shouldUseLocalSubmittedAnswer excludes previous-run answers before the cleanup effect runs', () => {
-  assert.equal(
-    shouldUseLocalSubmittedAnswer({
-      questionId: 'q1',
-      selfPacedMode: false,
-      hasObservedSnapshot: true,
-      activeQuestionIds: ['q1'],
-      activeQuestionRunStartedAt: 2_000,
-      previousActiveQuestionIds: ['q1'],
-      previousActiveQuestionRunStartedAt: 1_000,
-    }),
-    false,
   )
 })
