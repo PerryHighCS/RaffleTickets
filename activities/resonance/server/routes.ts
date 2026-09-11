@@ -490,9 +490,18 @@ function clearAllReveals(sessionData: ResonanceSessionData): QuestionReveal[] {
   return removedReveals
 }
 
-function finalizeActiveQuestionDrafts(sessionData: ResonanceSessionData, deadlineAt: number): number {
+interface DraftFinalizationResult {
+  changed: boolean
+  finalizedDraftCount: number
+}
+
+function finalizeActiveQuestionDrafts(
+  sessionData: ResonanceSessionData,
+  deadlineAt: number,
+): DraftFinalizationResult {
   const activeQuestionIds = new Set(sessionData.activeQuestionIds)
   const runStartedAt = sessionData.activeQuestionRunStartedAt
+  let changed = false
   let finalizedCount = 0
 
   for (const [draftKey, draft] of Object.entries(sessionData.responseDrafts)) {
@@ -510,18 +519,20 @@ function finalizeActiveQuestionDrafts(sessionData: ResonanceSessionData, deadlin
       finalizedCount += 1
     }
     delete sessionData.responseDrafts[draftKey]
+    changed = true
   }
 
-  return finalizedCount
+  return { changed, finalizedDraftCount: finalizedCount }
 }
 
-function expireActiveQuestionRunIfNeeded(session: ResonanceSession): boolean {
+function expireActiveQuestionRunIfNeeded(session: ResonanceSession): DraftFinalizationResult {
   const deadlineAt = session.data.activeQuestionDeadlineAt
   if (deadlineAt === null || Date.now() < deadlineAt) {
-    return false
+    return { changed: false, finalizedDraftCount: 0 }
   }
 
-  const finalizedDraftCount = finalizeActiveQuestionDrafts(session.data, deadlineAt)
+  const result = finalizeActiveQuestionDrafts(session.data, deadlineAt)
+  const { finalizedDraftCount } = result
   if (finalizedDraftCount > 0) {
     console.info(JSON.stringify({
       component: 'resonance',
@@ -531,11 +542,11 @@ function expireActiveQuestionRunIfNeeded(session: ResonanceSession): boolean {
     }))
   }
   if (session.data.stagedRun !== null) {
-    return finalizedDraftCount > 0
+    return result
   }
 
   clearActiveQuestions(session.data)
-  return true
+  return { changed: true, finalizedDraftCount }
 }
 
 function resolveRequestedActiveQuestionIds(body: Record<string, unknown>): string[] | null | undefined {
@@ -1353,8 +1364,13 @@ export default function setupResonanceRoutes(
       hadSelfPacedMode
         ? true
         : await resolveSelfPacedMode(session, sessions)
-    if (expireActiveQuestionRunIfNeeded(session)) {
+    const expiration = expireActiveQuestionRunIfNeeded(session)
+    if (expiration.changed) {
       await sessions.set(sessionId, session)
+      if (expiration.finalizedDraftCount > 0) {
+        await broadcastStudentSessionState(session, sessionId)
+        broadcastToRole('resonance:instructor-state', buildInstructorSnapshot(session), sessionId, true)
+      }
     } else if (!hadSelfPacedMode && resolvedSelfPacedMode && session.data.selfPacedMode === true) {
       await sessions.set(sessionId, session)
     }

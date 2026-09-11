@@ -276,7 +276,27 @@ void test('timed live runs finalize persisted drafts for every active question',
   await sessions.set(session.id, session)
 
   const app = createMockApp()
-  setupResonanceRoutes(app, sessions, createMockWs())
+  const ws = createMockWs()
+  const studentMessages: Array<{ type?: string }> = []
+  const instructorMessages: Array<{ type?: string }> = []
+  ;(ws.wss.clients as Set<unknown>).add({
+    readyState: 1,
+    sessionId: session.id,
+    isInstructor: false,
+    studentId: 'student1',
+    send(message: string) {
+      studentMessages.push(JSON.parse(message) as { type?: string })
+    },
+  })
+  ;(ws.wss.clients as Set<unknown>).add({
+    readyState: 1,
+    sessionId: session.id,
+    isInstructor: true,
+    send(message: string) {
+      instructorMessages.push(JSON.parse(message) as { type?: string })
+    },
+  })
+  setupResonanceRoutes(app, sessions, ws)
   const stateHandler = app.handlers.get['/api/resonance/:sessionId/state']
   const stateRes = createResponse()
   await stateHandler?.({ params: { sessionId: session.id } }, stateRes)
@@ -288,6 +308,8 @@ void test('timed live runs finalize persisted drafts for every active question',
     responses: Array<{ questionId: string; answer: unknown }>
   } | undefined
   assert.equal(stateRes.statusCode, 200)
+  assert.ok(studentMessages.some((message) => message.type === 'resonance:session-state'))
+  assert.ok(instructorMessages.some((message) => message.type === 'resonance:instructor-state'))
   assert.deepEqual(storedData?.activeQuestionIds, [])
   assert.equal(Object.keys(storedData?.responseDrafts ?? {}).length, 0)
   assert.deepEqual(
@@ -1907,6 +1929,7 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
   }
 
   const expiredSubmitRes = createResponse()
+  console.info('[TEST] submitting after expiry should return 409 after finalizing the persisted draft')
   await submitHandler?.(
     {
       params: { sessionId: session.id },
