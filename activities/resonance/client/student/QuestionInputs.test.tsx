@@ -164,16 +164,16 @@ void test('submitted inputs render the provided submitted message consistently',
   }
 })
 
-void test('QuestionView submits over websocket first when sendMessage is available', async () => {
+void test('QuestionView waits for REST confirmation when draft websocket messaging is available', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const previousFetch = globalThis.fetch
   const { fireEvent, render, waitFor } = await import('@testing-library/react')
 
   try {
-    let fetchCalled = false
-    ;(globalThis as { fetch?: typeof fetch }).fetch = (async () => {
-      fetchCalled = true
-      throw new Error('fetch should not be called when websocket submit succeeds')
+    let submittedBody: unknown = null
+    ;(globalThis as { fetch?: typeof fetch }).fetch = (async (_input, init) => {
+      submittedBody = JSON.parse(String(init?.body)) as unknown
+      return { ok: true, json: async () => ({ ok: true }) } as Response
     }) as typeof fetch
 
     const submitted: Array<{ questionId: string; answer: { type: string; text?: string } }> = []
@@ -189,6 +189,7 @@ void test('QuestionView submits over websocket first when sendMessage is availab
         },
         sessionId: 'session-1',
         studentId: 'student-1',
+        activeQuestionRunStartedAt: 1_000,
         sendMessage: (type: string, payload: unknown) => {
           wsMessages.push({ type, payload })
           return true
@@ -203,31 +204,15 @@ void test('QuestionView submits over websocket first when sendMessage is availab
     fireEvent.change(textarea, { target: { value: 'Fast path answer' } })
     fireEvent.click(rendered.getByRole('button', { name: /submit answer/i }))
 
-    await waitFor(() => {
-      assert.equal(wsMessages.length > 0, true)
-    })
+    await waitFor(() => assert.equal(submitted.length, 1))
 
-    assert.equal(fetchCalled, false)
-    assert.deepEqual(wsMessages[0], {
-      type: 'resonance:submit-answer',
-      payload: {
-        studentId: 'student-1',
-        questionId: 'q1',
-        answer: {
-          type: 'free-response',
-          text: 'Fast path answer',
-        },
-      },
+    assert.deepEqual(wsMessages, [])
+    assert.deepEqual(submittedBody, {
+      studentId: 'student-1',
+      questionId: 'q1',
+      activeQuestionRunStartedAt: 1_000,
+      answer: { type: 'free-response', text: 'Fast path answer' },
     })
-    assert.deepEqual(submitted, [
-      {
-        questionId: 'q1',
-        answer: {
-          type: 'free-response',
-          text: 'Fast path answer',
-        },
-      },
-    ])
 
     rendered.unmount()
   } finally {
@@ -309,6 +294,42 @@ void test('QuestionView ignores a stale REST submission after a new run starts',
     await waitFor(() => assert.ok(deferredFetch.resolve))
 
     rendered.rerender(renderQuestion(2_000))
+    deferredFetch.resolve?.({ ok: true, json: async () => ({ ok: true }) } as Response)
+    await waitFor(() => assert.deepEqual(submitted, []))
+    rendered.unmount()
+  } finally {
+    ;(globalThis as { fetch?: typeof fetch }).fetch = previousFetch
+    restoreDomEnvironment()
+  }
+})
+
+void test('QuestionView ignores a REST submission after its session identity changes', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const previousFetch = globalThis.fetch
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const deferredFetch: { resolve: ((response: Response) => void) | null } = { resolve: null }
+    const submitted: unknown[] = []
+    ;(globalThis as { fetch?: typeof fetch }).fetch = (() => new Promise<Response>((resolve) => {
+      deferredFetch.resolve = resolve
+    })) as typeof fetch
+
+    const question = { id: 'q1', type: 'free-response' as const, text: 'Explain.', order: 0 }
+    const renderQuestion = (sessionId: string, studentId: string) => React.createElement(QuestionView, {
+      question,
+      sessionId,
+      studentId,
+      activeQuestionRunStartedAt: null,
+      sendMessage: () => false,
+      onSubmitted: (_questionId, answer) => submitted.push(answer),
+    })
+    const rendered = render(renderQuestion('session-1', 'student-1'))
+    fireEvent.change(rendered.getByLabelText(/your answer/i), { target: { value: 'Earlier session answer' } })
+    fireEvent.click(rendered.getByRole('button', { name: /submit answer/i }))
+    await waitFor(() => assert.ok(deferredFetch.resolve))
+
+    rendered.rerender(renderQuestion('session-2', 'student-2'))
     deferredFetch.resolve?.({ ok: true, json: async () => ({ ok: true }) } as Response)
     await waitFor(() => assert.deepEqual(submitted, []))
     rendered.unmount()
@@ -504,6 +525,7 @@ void test('QuestionView keeps an unsent draft associated with its original quest
       assert.deepEqual(sentDrafts, [{
         studentId: 'student-1',
         questionId: 'q1',
+        activeQuestionRunStartedAt: 1_000,
         answer: { type: 'free-response', text: 'Draft for the first question' },
       }])
     })

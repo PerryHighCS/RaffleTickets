@@ -1727,6 +1727,7 @@ void test('activate-question route can activate all questions with a shared coun
   assert.equal(activateRes.statusCode, 200)
   const activateBody = activateRes.body as {
     activeQuestionIds?: string[]
+    activeQuestionRunStartedAt?: number | null
     activeQuestionDeadlineAt?: number | null
   }
   assert.deepEqual(activateBody.activeQuestionIds, ['q1', 'q2'])
@@ -1744,6 +1745,7 @@ void test('activate-question route can activate all questions with a shared coun
   const stateBody = stateRes.body as {
     activeQuestionIds?: string[]
     activeQuestions?: Array<{ id: string }>
+    activeQuestionRunStartedAt?: number | null
     activeQuestionDeadlineAt?: number | null
   }
   assert.deepEqual(stateBody.activeQuestionIds, ['q1', 'q2'])
@@ -1757,6 +1759,7 @@ void test('activate-question route can activate all questions with a shared coun
       body: {
         studentId: 'student1',
         questionId: 'q2',
+        activeQuestionRunStartedAt: stateBody.activeQuestionRunStartedAt,
         answer: {
           type: 'multiple-choice',
           selectedOptionIds: ['q2_b'],
@@ -1850,6 +1853,7 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
       body: {
         studentId: 'student1',
         questionId: 'q2',
+        activeQuestionRunStartedAt: stagedRunStartedAt,
         answer: {
           type: 'multiple-choice',
           selectedOptionIds: ['q2_b'],
@@ -1911,9 +1915,10 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
   assert.equal(visibleState.activeQuestions?.[0]?.choicesRevealed, true)
   assert.equal(visibleState.activeQuestions?.[0]?.options?.length, 2)
 
+  const expiredRunStartedAt = Date.now() - 3_000
   const expiredSession = await sessions.get(session.id)
   if (expiredSession) {
-    expiredSession.data.activeQuestionRunStartedAt = Date.now() - 3_000
+    expiredSession.data.activeQuestionRunStartedAt = expiredRunStartedAt
     const responseDrafts = expiredSession.data.responseDrafts as Record<string, unknown>
     responseDrafts['q2:student1'] = {
       questionId: 'q2',
@@ -1936,6 +1941,7 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
       body: {
         studentId: 'student1',
         questionId: 'q2',
+        activeQuestionRunStartedAt: expiredRunStartedAt,
         answer: {
           type: 'multiple-choice',
           selectedOptionIds: ['q2_b'],
@@ -1973,6 +1979,7 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
       body: {
         studentId: 'student1',
         questionId: 'q2',
+        activeQuestionRunStartedAt: expiredRunStartedAt,
         answer: {
           type: 'multiple-choice',
           selectedOptionIds: ['q2_b'],
@@ -2307,6 +2314,8 @@ void test('submit-answer route broadcasts an updated instructor snapshot to inst
   )
 
   assert.equal(activateRes.statusCode, 200)
+  const activatedSession = await sessions.get(session.id)
+  const activeQuestionRunStartedAt = activatedSession?.data.activeQuestionRunStartedAt
 
   const submitRes = createResponse()
   await submitHandler?.(
@@ -2315,6 +2324,7 @@ void test('submit-answer route broadcasts an updated instructor snapshot to inst
       body: {
         studentId: 'student1',
         questionId: 'q1',
+        activeQuestionRunStartedAt,
         answer: {
           type: 'free-response',
           text: 'Updated live answer',
@@ -2406,6 +2416,7 @@ void test('submit-answer route updates an existing response when a question is r
       body: {
         studentId: 'student1',
         questionId: 'q1',
+        activeQuestionRunStartedAt: null,
         answer: {
           type: 'free-response',
           text: 'Revised answer',
@@ -2461,6 +2472,8 @@ void test('reactivating a question keeps prior answers editable for students and
     firstActivateRes,
   )
   assert.equal(firstActivateRes.statusCode, 200)
+  const firstActivatedSession = await sessions.get(session.id)
+  const firstRunStartedAt = firstActivatedSession?.data.activeQuestionRunStartedAt
 
   const submitRes = createResponse()
   await submitHandler?.(
@@ -2469,6 +2482,7 @@ void test('reactivating a question keeps prior answers editable for students and
       body: {
         studentId: 'student1',
         questionId: 'q1',
+        activeQuestionRunStartedAt: firstRunStartedAt,
         answer: {
           type: 'free-response',
           text: 'First run answer',
@@ -2494,6 +2508,26 @@ void test('reactivating a question keeps prior answers editable for students and
     secondActivateRes,
   )
   assert.equal(secondActivateRes.statusCode, 200)
+
+  const staleSubmitRes = createResponse()
+  console.info('[TEST] a submission from the previous run should return 409')
+  await submitHandler?.(
+    {
+      params: { sessionId: session.id },
+      body: {
+        studentId: 'student1',
+        questionId: 'q1',
+        activeQuestionRunStartedAt: firstRunStartedAt,
+        answer: {
+          type: 'free-response',
+          text: 'Delayed first run answer',
+        },
+      },
+    },
+    staleSubmitRes,
+  )
+  assert.equal(staleSubmitRes.statusCode, 409)
+  assert.deepEqual(staleSubmitRes.body, { error: 'question run changed' })
 
   const studentStateRes = createResponse()
   await stateHandler?.(

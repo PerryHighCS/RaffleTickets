@@ -15,6 +15,7 @@ interface Props {
   isSubmitted?: boolean
   submittedMessage?: string
   announceSubmittedMessage?: boolean
+  onDraftChanged?(questionId: string, answer: AnswerPayload | null): void
   onSubmitted?(questionId: string, answer: AnswerPayload): void
   sendMessage?(type: string, payload: unknown): boolean
 }
@@ -41,6 +42,7 @@ export default function QuestionView({
   isSubmitted = false,
   submittedMessage = 'Answer submitted.',
   announceSubmittedMessage = true,
+  onDraftChanged,
   onSubmitted,
   sendMessage,
 }: Props) {
@@ -74,7 +76,7 @@ export default function QuestionView({
     return () => {
       submissionAttemptRef.current += 1
     }
-  }, [question.id, activeQuestionRunStartedAt])
+  }, [question.id, activeQuestionRunStartedAt, sessionId, studentId])
 
   useEffect(() => {
     if (isSameAnswer(draftAnswer, synchronizedInitialAnswerRef.current)) {
@@ -102,6 +104,7 @@ export default function QuestionView({
       const sent = sendMessage('resonance:update-draft', {
         studentId,
         questionId: question.id,
+        activeQuestionRunStartedAt,
         answer: pendingDraft,
       })
       if (sent) {
@@ -138,26 +141,16 @@ export default function QuestionView({
     const submissionAttempt = ++submissionAttemptRef.current
     const submissionRunStartedAt = activeQuestionRunStartedAtRef.current
 
-    const sentViaWs = sendMessage?.('resonance:submit-answer', {
-      studentId,
-      questionId: question.id,
-      answer,
-    }) ?? false
-
-    if (sentViaWs) {
-      onSubmitted?.(question.id, answer)
-      setDraftAnswer(answer)
-      lastSentDraftRef.current = answer
-      draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-      setSubmitting(false)
-      return
-    }
-
     try {
       const resp = await fetch(`/api/resonance/${sessionId}/submit-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId, questionId: question.id, answer }),
+        body: JSON.stringify({
+          studentId,
+          questionId: question.id,
+          activeQuestionRunStartedAt: submissionRunStartedAt,
+          answer,
+        }),
       })
 
       const data = (await resp.json()) as { ok?: boolean; error?: string }
@@ -210,8 +203,10 @@ export default function QuestionView({
           value={draftAnswer?.type === 'free-response' ? draftAnswer.text : ''}
           onDraftChange={(text) => {
             const trimmed = text.trim()
+            const answer = trimmed.length > 0 ? { type: 'free-response' as const, text: trimmed } : null
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            setDraftAnswer(trimmed.length > 0 ? { type: 'free-response', text: trimmed } : null)
+            setDraftAnswer(answer)
+            onDraftChanged?.(question.id, answer)
           }}
           onSubmit={(text) => submitAnswer({ type: 'free-response', text })}
           submitting={submitting || disabled}
@@ -225,8 +220,12 @@ export default function QuestionView({
           selectionMode={question.selectionMode}
           value={draftAnswer?.type === 'multiple-choice' ? draftAnswer.selectedOptionIds : []}
           onDraftChange={(selectedOptionIds) => {
+            const answer = selectedOptionIds.length > 0
+              ? { type: 'multiple-choice' as const, selectedOptionIds }
+              : null
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            setDraftAnswer(selectedOptionIds.length > 0 ? { type: 'multiple-choice', selectedOptionIds } : null)
+            setDraftAnswer(answer)
+            onDraftChanged?.(question.id, answer)
           }}
           onSubmit={(selectedOptionIds) => submitAnswer({ type: 'multiple-choice', selectedOptionIds })}
           submitting={submitting || disabled}

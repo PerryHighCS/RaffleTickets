@@ -58,6 +58,16 @@ export function clearLiveQuestionSubmission(params: {
   return next
 }
 
+export function resolveQuestionAnswer(params: {
+  localAnswers: Record<string, AnswerPayload | null>
+  snapshotAnswers: Record<string, AnswerPayload>
+  questionId: string
+}): AnswerPayload | null {
+  return Object.prototype.hasOwnProperty.call(params.localAnswers, params.questionId)
+    ? params.localAnswers[params.questionId] ?? null
+    : params.snapshotAnswers[params.questionId] ?? null
+}
+
 export function resolveSelfPacedSubmittedMessage(params: {
   questionIds: string[]
   submittedQuestionIds: Set<string>
@@ -147,18 +157,26 @@ export default function ResonanceStudent() {
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null)
   const [submittedQuestionIds, setSubmittedQuestionIds] = useState<Set<string>>(new Set())
-  const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, AnswerPayload>>({})
+  const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, AnswerPayload | null>>({})
   const [submissionAnnouncement, setSubmissionAnnouncement] = useState<SubmissionAnnouncement | null>(null)
   const [countdownNow, setCountdownNow] = useState(() => Date.now())
 
-  const mountedRef = useRef(true)
   const previousActiveQuestionIdsRef = useRef<string[]>([])
   const previousActiveQuestionRunStartedAtRef = useRef<number | null>(null)
   const hasObservedSnapshotRef = useRef(false)
 
   useLayoutEffect(() => {
+    setIdentityResolved(false)
+    setStudentName(null)
+    setStudentId(null)
+    setNameSubmitted(false)
+    setRegistered(false)
+    setRegisterError(null)
+  }, [sessionId])
+
+  useEffect(() => {
     if (!sessionId) return
-    mountedRef.current = true
+    let cancelled = false
 
     void (async () => {
       try {
@@ -169,7 +187,7 @@ export default function ResonanceStudent() {
           localStorage: window.localStorage,
           sessionStorage: window.sessionStorage,
         })
-        if (!mountedRef.current) return
+        if (cancelled) return
 
         setStudentName(identity.studentName)
         setStudentId(identity.studentId)
@@ -177,17 +195,18 @@ export default function ResonanceStudent() {
       } catch {
         // Identity resolution failing is non-fatal; fall through to NameEntryForm.
       } finally {
-        if (mountedRef.current) setIdentityResolved(true)
+        if (!cancelled) setIdentityResolved(true)
       }
     })()
 
     return () => {
-      mountedRef.current = false
+      cancelled = true
     }
   }, [sessionId])
 
   useEffect(() => {
     if (!sessionId || !nameSubmitted || registered || studentName === null) return
+    let cancelled = false
 
     void (async () => {
       try {
@@ -198,7 +217,7 @@ export default function ResonanceStudent() {
         })
 
         const data = (await resp.json()) as RegisterResponse
-        if (!mountedRef.current) return
+        if (cancelled) return
 
         if (!resp.ok || !data.studentId) {
           setRegisterError(data.error ?? 'Failed to join session')
@@ -214,9 +233,13 @@ export default function ResonanceStudent() {
         )
         setRegistered(true)
       } catch {
-        if (mountedRef.current) setRegisterError('Network error — could not join session')
+        if (!cancelled) setRegisterError('Network error — could not join session')
       }
     })()
+
+    return () => {
+      cancelled = true
+    }
   }, [sessionId, nameSubmitted, registered, studentName, studentId])
 
   const { snapshot, loading: sessionLoading, error: sessionError, sendMessage } = useResonanceSession(
@@ -455,16 +478,22 @@ export default function ResonanceStudent() {
                 question={activeQuestion}
                 sessionId={sessionId}
                 studentId={studentId}
-                initialAnswer={
-                  submittedAnswers[activeQuestion.id] ??
-                  snapshot.submittedAnswers[activeQuestion.id] ??
-                  null
-                }
+                initialAnswer={resolveQuestionAnswer({
+                  localAnswers: submittedAnswers,
+                  snapshotAnswers: snapshot.submittedAnswers,
+                  questionId: activeQuestion.id,
+                })}
                 activeQuestionRunStartedAt={snapshot.activeQuestionRunStartedAt}
                 disabled={hasExpired}
                 isSubmitted={submittedQuestionIds.has(activeQuestion.id)}
                 submittedMessage={submittedMessage}
                 announceSubmittedMessage={!snapshot.selfPacedMode}
+                onDraftChanged={(questionId, answer) => {
+                  setSubmittedAnswers((current) => ({
+                    ...current,
+                    [questionId]: answer,
+                  }))
+                }}
                 onSubmitted={(questionId, answer) => {
                   setSubmittedAnswers((current) => ({
                     ...current,

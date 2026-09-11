@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolveNextSelfPacedQuestionId } from './ResonanceStudent.js'
-import { clearLiveQuestionSubmission } from './ResonanceStudent.js'
+import { clearLiveQuestionSubmission, resolveQuestionAnswer } from './ResonanceStudent.js'
 import { resolveQuestionStatusBadge } from './ResonanceStudent.js'
 import { resolveSubmissionAnnouncement } from './ResonanceStudent.js'
 import { resolveSelfPacedSubmittedMessage } from './ResonanceStudent.js'
@@ -25,6 +25,34 @@ void test('clearLiveQuestionSubmission unlocks a revisited live question only', 
       questionId: 'q1',
     }),
     submittedQuestionIds,
+  )
+})
+
+void test('resolveQuestionAnswer preserves a revised local draft over an older snapshot answer', () => {
+  assert.deepEqual(
+    resolveQuestionAnswer({
+      localAnswers: {
+        q1: { type: 'free-response', text: 'Revised answer' },
+      },
+      snapshotAnswers: {
+        q1: { type: 'free-response', text: 'Previously submitted answer' },
+      },
+      questionId: 'q1',
+    }),
+    { type: 'free-response', text: 'Revised answer' },
+  )
+})
+
+void test('resolveQuestionAnswer preserves an intentionally cleared local draft', () => {
+  assert.equal(
+    resolveQuestionAnswer({
+      localAnswers: { q1: null },
+      snapshotAnswers: {
+        q1: { type: 'free-response', text: 'Previously submitted answer' },
+      },
+      questionId: 'q1',
+    }),
+    null,
   )
 })
 

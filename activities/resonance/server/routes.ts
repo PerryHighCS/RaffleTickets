@@ -407,6 +407,13 @@ function getQuestionAnswerability(sessionData: ResonanceSessionData, questionId:
     : { ok: false, reason: 'choices-hidden' }
 }
 
+function matchesActiveQuestionRun(sessionData: ResonanceSessionData, value: unknown): boolean {
+  return (
+    (value === null || (typeof value === 'number' && Number.isFinite(value))) &&
+    value === sessionData.activeQuestionRunStartedAt
+  )
+}
+
 export function resolveAnswerabilityErrorMessage(reason: 'expired' | 'choices-hidden' | 'inactive'): string {
   switch (reason) {
     case 'expired':
@@ -1641,6 +1648,10 @@ export default function setupResonanceRoutes(
       res.status(400).json({ error: 'invalid studentId' })
       return
     }
+    if (!matchesActiveQuestionRun(session.data, body.activeQuestionRunStartedAt)) {
+      res.status(409).json({ error: 'question run changed' })
+      return
+    }
 
     const selfPacedMode = await resolveSelfPacedMode(session, sessions)
     const availableQuestionIds = resolveStudentAvailableQuestionIds(session, selfPacedMode)
@@ -2567,6 +2578,7 @@ export default function setupResonanceRoutes(
       case 'resonance:submit-answer': {
         const studentId = resolveSocketStudentId(payload.studentId, clientStudentId)
         if (!studentId || !session.data.students[studentId]) return
+        if (!matchesActiveQuestionRun(session.data, payload.activeQuestionRunStartedAt)) return
         const requestedQuestionId = typeof payload.questionId === 'string' ? payload.questionId : null
         const selfPacedMode = await resolveSelfPacedMode(session, sessions)
         const availableQuestionIds = resolveStudentAvailableQuestionIds(session, selfPacedMode)
@@ -2602,6 +2614,7 @@ export default function setupResonanceRoutes(
       case 'resonance:update-draft': {
         const studentId = resolveSocketStudentId(payload.studentId, clientStudentId)
         if (!studentId || !session.data.students[studentId]) return
+        if (!matchesActiveQuestionRun(session.data, payload.activeQuestionRunStartedAt)) return
         const selfPacedMode = await resolveSelfPacedMode(session, sessions)
         const availableQuestionIds = resolveStudentAvailableQuestionIds(session, selfPacedMode)
 
@@ -2615,14 +2628,6 @@ export default function setupResonanceRoutes(
         const question = session.data.questions.find((entry) => entry.id === questionId) ?? null
         if (!question) return
         if (!isCurrentStagedQuestionAnswerable(session.data, questionId)) return
-
-        const alreadyAnswered = session.data.responses.some(
-          (response) =>
-            response.questionId === questionId &&
-            response.studentId === studentId &&
-            !isStaleActiveResponse(session.data, response),
-        )
-        if (alreadyAnswered) return
 
         const draftKey = buildDraftKey(questionId, studentId)
         if (payload.answer === null) {
