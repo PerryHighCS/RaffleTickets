@@ -277,6 +277,7 @@ void test('QuestionView auto-submits a non-empty draft when time expires', async
         },
       })
     })
+    await new Promise((resolve) => window.setTimeout(resolve, 1_600))
     assert.deepEqual(messages, [{
       type: 'resonance:submit-answer',
       payload: {
@@ -332,6 +333,42 @@ void test('QuestionView does not auto-submit while a manual submission is pendin
     deferredFetch.resolve({ ok: true, json: async () => ({ ok: true }) } as Response)
     await waitFor(() => assert.equal(submitted.length, 1))
     assert.equal(fetchCount, 1)
+    rendered.unmount()
+  } finally {
+    ;(globalThis as { fetch?: typeof fetch }).fetch = previousFetch
+    restoreDomEnvironment()
+  }
+})
+
+void test('QuestionView ignores a stale REST submission after a new run starts', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const previousFetch = globalThis.fetch
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const deferredFetch: { resolve: ((response: Response) => void) | null } = { resolve: null }
+    const submitted: unknown[] = []
+    ;(globalThis as { fetch?: typeof fetch }).fetch = (() => new Promise<Response>((resolve) => {
+      deferredFetch.resolve = resolve
+    })) as typeof fetch
+
+    const question = { id: 'q1', type: 'free-response' as const, text: 'Explain.', order: 0 }
+    const renderQuestion = (activeQuestionRunStartedAt: number) => React.createElement(QuestionView, {
+      question,
+      sessionId: 'session-1',
+      studentId: 'student-1',
+      activeQuestionRunStartedAt,
+      sendMessage: () => false,
+      onSubmitted: (_questionId, answer) => submitted.push(answer),
+    })
+    const rendered = render(renderQuestion(1_000))
+    fireEvent.change(rendered.getByLabelText(/your answer/i), { target: { value: 'Earlier run answer' } })
+    fireEvent.click(rendered.getByRole('button', { name: /submit answer/i }))
+    await waitFor(() => assert.ok(deferredFetch.resolve))
+
+    rendered.rerender(renderQuestion(2_000))
+    deferredFetch.resolve?.({ ok: true, json: async () => ({ ok: true }) } as Response)
+    await waitFor(() => assert.deepEqual(submitted, []))
     rendered.unmount()
   } finally {
     ;(globalThis as { fetch?: typeof fetch }).fetch = previousFetch

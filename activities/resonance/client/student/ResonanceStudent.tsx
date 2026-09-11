@@ -456,8 +456,8 @@ export default function ResonanceStudent() {
                 sessionId={sessionId}
                 studentId={studentId}
                 initialAnswer={
-                  snapshot.submittedAnswers[activeQuestion.id] ??
                   submittedAnswers[activeQuestion.id] ??
+                  snapshot.submittedAnswers[activeQuestion.id] ??
                   null
                 }
                 activeQuestionRunStartedAt={snapshot.activeQuestionRunStartedAt}

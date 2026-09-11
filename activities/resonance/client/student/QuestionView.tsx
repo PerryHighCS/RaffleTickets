@@ -51,6 +51,7 @@ export default function QuestionView({
   const initialAnswerRef = useRef(initialAnswer)
   const synchronizedInitialAnswerRef = useRef(initialAnswer)
   const autoSubmittedRunRef = useRef<number | null>(null)
+  const submissionAttemptRef = useRef(0)
   const disabledRef = useRef(disabled)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
   const draftAnswerRunStartedAtRef = useRef(activeQuestionRunStartedAt)
@@ -67,6 +68,12 @@ export default function QuestionView({
   }, [question.id, activeQuestionRunStartedAt, isSubmitted])
 
   useEffect(() => {
+    submissionAttemptRef.current += 1
+    setSubmitting(false)
+    setError(null)
+  }, [question.id, activeQuestionRunStartedAt])
+
+  useEffect(() => {
     if (isSameAnswer(draftAnswer, synchronizedInitialAnswerRef.current)) {
       setDraftAnswer(initialAnswer)
       lastSentDraftRef.current = initialAnswer
@@ -78,6 +85,7 @@ export default function QuestionView({
     const draftAnswerRunStartedAt = draftAnswerRunStartedAtRef.current
     if (
       draftAnswerRunStartedAt !== activeQuestionRunStartedAt ||
+      disabled ||
       isWaitingForChoices ||
       isSubmitted ||
       !sendMessage ||
@@ -144,6 +152,8 @@ export default function QuestionView({
 
     setSubmitting(true)
     setError(null)
+    const submissionAttempt = ++submissionAttemptRef.current
+    const submissionRunStartedAt = activeQuestionRunStartedAtRef.current
 
     const sentViaWs = sendMessage?.('resonance:submit-answer', {
       studentId,
@@ -171,6 +181,13 @@ export default function QuestionView({
 
       const data = (await resp.json()) as { ok?: boolean; error?: string }
 
+      if (
+        submissionAttempt !== submissionAttemptRef.current ||
+        submissionRunStartedAt !== activeQuestionRunStartedAtRef.current
+      ) {
+        return
+      }
+
       if (!resp.ok) {
         setError(data.error ?? 'Submission failed — please try again')
         setSubmitting(false)
@@ -183,9 +200,19 @@ export default function QuestionView({
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
       autoSubmittedRunRef.current = activeQuestionRunStartedAt
     } catch {
-      setError('Network error — please try again')
+      if (
+        submissionAttempt === submissionAttemptRef.current &&
+        submissionRunStartedAt === activeQuestionRunStartedAtRef.current
+      ) {
+        setError('Network error — please try again')
+      }
     } finally {
-      setSubmitting(false)
+      if (
+        submissionAttempt === submissionAttemptRef.current &&
+        submissionRunStartedAt === activeQuestionRunStartedAtRef.current
+      ) {
+        setSubmitting(false)
+      }
     }
   }
 
