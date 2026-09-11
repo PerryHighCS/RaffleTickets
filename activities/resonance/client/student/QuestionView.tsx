@@ -50,7 +50,6 @@ export default function QuestionView({
   const lastSentDraftRef = useRef<AnswerPayload | null>(null)
   const initialAnswerRef = useRef(initialAnswer)
   const synchronizedInitialAnswerRef = useRef(initialAnswer)
-  const autoSubmittedRunRef = useRef<number | null>(null)
   const submissionAttemptRef = useRef(0)
   const disabledRef = useRef(disabled)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
@@ -127,31 +126,10 @@ export default function QuestionView({
     }
   }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
 
-  useEffect(() => {
-    if (!disabled) {
-      autoSubmittedRunRef.current = null
-      return
-    }
-    if (
-      autoSubmittedRunRef.current === activeQuestionRunStartedAt ||
-      submitting ||
-      isSubmitted ||
-      isWaitingForChoices ||
-      draftAnswerRunStartedAtRef.current !== activeQuestionRunStartedAt ||
-      draftAnswer === null
-    ) {
-      return
-    }
-
-    autoSubmittedRunRef.current = activeQuestionRunStartedAt
-    void submitAnswer(draftAnswer, true)
-  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, submitting])
-
   async function submitAnswer(
     answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] },
-    autoSubmit = false,
   ) {
-    if ((disabled && !autoSubmit) || isSubmitted || isWaitingForChoices) {
+    if (disabled || isSubmitted || isWaitingForChoices) {
       return
     }
 
@@ -164,7 +142,6 @@ export default function QuestionView({
       studentId,
       questionId: question.id,
       answer,
-      ...(autoSubmit ? { autoSubmit: true } : {}),
     }) ?? false
 
     if (sentViaWs) {
@@ -172,7 +149,6 @@ export default function QuestionView({
       setDraftAnswer(answer)
       lastSentDraftRef.current = answer
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-      autoSubmittedRunRef.current = activeQuestionRunStartedAt
       setSubmitting(false)
       return
     }
@@ -181,7 +157,7 @@ export default function QuestionView({
       const resp = await fetch(`/api/resonance/${sessionId}/submit-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId, questionId: question.id, answer, ...(autoSubmit ? { autoSubmit: true } : {}) }),
+        body: JSON.stringify({ studentId, questionId: question.id, answer }),
       })
 
       const data = (await resp.json()) as { ok?: boolean; error?: string }
@@ -203,7 +179,6 @@ export default function QuestionView({
       setDraftAnswer(answer)
       lastSentDraftRef.current = answer
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-      autoSubmittedRunRef.current = activeQuestionRunStartedAt
     } catch {
       if (
         submissionAttempt === submissionAttemptRef.current &&
@@ -236,7 +211,6 @@ export default function QuestionView({
           onDraftChange={(text) => {
             const trimmed = text.trim()
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            autoSubmittedRunRef.current = null
             setDraftAnswer(trimmed.length > 0 ? { type: 'free-response', text: trimmed } : null)
           }}
           onSubmit={(text) => submitAnswer({ type: 'free-response', text })}
@@ -252,7 +226,6 @@ export default function QuestionView({
           value={draftAnswer?.type === 'multiple-choice' ? draftAnswer.selectedOptionIds : []}
           onDraftChange={(selectedOptionIds) => {
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
-            autoSubmittedRunRef.current = null
             setDraftAnswer(selectedOptionIds.length > 0 ? { type: 'multiple-choice', selectedOptionIds } : null)
           }}
           onSubmit={(selectedOptionIds) => submitAnswer({ type: 'multiple-choice', selectedOptionIds })}

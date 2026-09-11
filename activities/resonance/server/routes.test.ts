@@ -251,6 +251,56 @@ void test('resolveAnswerabilityErrorMessage distinguishes staged submission fail
   assert.equal(resolveAnswerabilityErrorMessage('choices-hidden'), 'choices have not been revealed')
 })
 
+void test('timed live runs finalize persisted drafts for every active question', async () => {
+  const sessions = createSessionStore(null)
+  const session = createMultiQuestionSession()
+  const now = Date.now()
+  session.data.activeQuestionId = 'q1'
+  session.data.activeQuestionIds = ['q1', 'q2']
+  session.data.activeQuestionRunStartedAt = now - 10_000
+  session.data.activeQuestionDeadlineAt = now - 1_000
+  session.data.responseDrafts = {
+    'q1:student1': {
+      questionId: 'q1',
+      studentId: 'student1',
+      updatedAt: now - 2_000,
+      answer: { type: 'free-response', text: 'First persisted draft' },
+    },
+    'q2:student1': {
+      questionId: 'q2',
+      studentId: 'student1',
+      updatedAt: now - 2_000,
+      answer: { type: 'multiple-choice', selectedOptionIds: ['q2_b'] },
+    },
+  }
+  await sessions.set(session.id, session)
+
+  const app = createMockApp()
+  setupResonanceRoutes(app, sessions, createMockWs())
+  const stateHandler = app.handlers.get['/api/resonance/:sessionId/state']
+  const stateRes = createResponse()
+  await stateHandler?.({ params: { sessionId: session.id } }, stateRes)
+
+  const stored = await sessions.get(session.id)
+  const storedData = stored?.data as {
+    activeQuestionIds: string[]
+    responseDrafts: Record<string, unknown>
+    responses: Array<{ questionId: string; answer: unknown }>
+  } | undefined
+  assert.equal(stateRes.statusCode, 200)
+  assert.deepEqual(storedData?.activeQuestionIds, [])
+  assert.equal(Object.keys(storedData?.responseDrafts ?? {}).length, 0)
+  assert.deepEqual(
+    storedData?.responses.map((response) => ({ questionId: response.questionId, answer: response.answer })),
+    [
+      { questionId: 'q1', answer: { type: 'free-response', text: 'First persisted draft' } },
+      { questionId: 'q2', answer: { type: 'multiple-choice', selectedOptionIds: ['q2_b'] } },
+    ],
+  )
+
+  await sessions.close()
+})
+
 void test('embedded resonance sessions auto-activate all questions when embedded launch requests it', async () => {
   const sessions = createSessionStore(null)
   const session = createEmbeddedResonanceSession()
@@ -1841,6 +1891,17 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
 
   const expiredSession = await sessions.get(session.id)
   if (expiredSession) {
+    expiredSession.data.activeQuestionRunStartedAt = Date.now() - 3_000
+    const responseDrafts = expiredSession.data.responseDrafts as Record<string, unknown>
+    responseDrafts['q2:student1'] = {
+      questionId: 'q2',
+      studentId: 'student1',
+      updatedAt: Date.now() - 2_000,
+      answer: {
+        type: 'multiple-choice',
+        selectedOptionIds: ['q2_b'],
+      },
+    }
     expiredSession.data.activeQuestionDeadlineAt = Date.now() - 1_000
     await sessions.set(session.id, expiredSession)
   }
@@ -1856,6 +1917,7 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
           type: 'multiple-choice',
           selectedOptionIds: ['q2_b'],
         },
+        autoSubmit: true,
       },
     },
     expiredSubmitRes,
@@ -1863,24 +1925,17 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
 
   assert.equal(expiredSubmitRes.statusCode, 409)
   assert.deepEqual(expiredSubmitRes.body, { error: 'time is up for this question' })
-
-  const timeoutAutoSubmitRes = createResponse()
-  await submitHandler?.(
-    {
-      params: { sessionId: session.id },
-      body: {
-        studentId: 'student1',
-        questionId: 'q2',
-        answer: {
-          type: 'multiple-choice',
-          selectedOptionIds: ['q2_b'],
-        },
-        autoSubmit: true,
-      },
-    },
-    timeoutAutoSubmitRes,
+  const finalizedSession = await sessions.get(session.id)
+  const finalizedData = finalizedSession?.data as {
+    responses: Array<{ questionId: string; studentId: string; answer: unknown }>
+    responseDrafts: Record<string, unknown>
+  } | undefined
+  assert.deepEqual(
+    finalizedData?.responses.find((response) =>
+      response.questionId === 'q2' && response.studentId === 'student1')?.answer,
+    { type: 'multiple-choice', selectedOptionIds: ['q2_b'] },
   )
-  assert.equal(timeoutAutoSubmitRes.statusCode, 200)
+  assert.equal(finalizedData?.responseDrafts['q2:student1'], undefined)
 
   const resetDeadlineSession = await sessions.get(session.id)
   if (resetDeadlineSession) {

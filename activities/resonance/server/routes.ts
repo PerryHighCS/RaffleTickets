@@ -389,17 +389,6 @@ type QuestionAnswerability =
   | { ok: true }
   | { ok: false; reason: 'expired' | 'choices-hidden' | 'inactive' }
 
-const TIMEOUT_AUTOSUBMIT_GRACE_MS = 5_000
-
-function canAcceptTimeoutAutoSubmit(sessionData: ResonanceSessionData, autoSubmit: unknown): boolean {
-  const deadlineAt = sessionData.activeQuestionDeadlineAt
-  return (
-    autoSubmit === true &&
-    deadlineAt !== null &&
-    Date.now() - deadlineAt <= TIMEOUT_AUTOSUBMIT_GRACE_MS
-  )
-}
-
 function getQuestionAnswerability(sessionData: ResonanceSessionData, questionId: string): QuestionAnswerability {
   if (sessionData.activeQuestionDeadlineAt !== null && Date.now() >= sessionData.activeQuestionDeadlineAt) {
     return { ok: false, reason: 'expired' }
@@ -501,14 +490,48 @@ function clearAllReveals(sessionData: ResonanceSessionData): QuestionReveal[] {
   return removedReveals
 }
 
-function expireActiveQuestionRunIfNeeded(session: ResonanceSession): boolean {
-  if (session.data.stagedRun !== null) {
-    return false
+function finalizeActiveQuestionDrafts(sessionData: ResonanceSessionData, deadlineAt: number): number {
+  const activeQuestionIds = new Set(sessionData.activeQuestionIds)
+  const runStartedAt = sessionData.activeQuestionRunStartedAt
+  let finalizedCount = 0
+
+  for (const [draftKey, draft] of Object.entries(sessionData.responseDrafts)) {
+    if (!activeQuestionIds.has(draft.questionId)) {
+      continue
+    }
+
+    if (
+      sessionData.students[draft.studentId] !== undefined &&
+      runStartedAt !== null &&
+      draft.updatedAt <= deadlineAt &&
+      draft.updatedAt >= runStartedAt
+    ) {
+      upsertResponse(sessionData.responses, draft.questionId, draft.studentId, draft.answer)
+      finalizedCount += 1
+    }
+    delete sessionData.responseDrafts[draftKey]
   }
 
+  return finalizedCount
+}
+
+function expireActiveQuestionRunIfNeeded(session: ResonanceSession): boolean {
   const deadlineAt = session.data.activeQuestionDeadlineAt
   if (deadlineAt === null || Date.now() < deadlineAt) {
     return false
+  }
+
+  const finalizedDraftCount = finalizeActiveQuestionDrafts(session.data, deadlineAt)
+  if (finalizedDraftCount > 0) {
+    console.info(JSON.stringify({
+      component: 'resonance',
+      event: 'drafts-finalized-at-timeout',
+      sessionId: session.id,
+      finalizedDraftCount,
+    }))
+  }
+  if (session.data.stagedRun !== null) {
+    return finalizedDraftCount > 0
   }
 
   clearActiveQuestions(session.data)
@@ -1625,7 +1648,7 @@ export default function setupResonanceRoutes(
     }
 
     const answerability = getQuestionAnswerability(session.data, questionId)
-    if (!answerability.ok && !(answerability.reason === 'expired' && canAcceptTimeoutAutoSubmit(session.data, body.autoSubmit))) {
+    if (!answerability.ok) {
       res.status(409).json({
         error: resolveAnswerabilityErrorMessage(answerability.reason),
       })
@@ -2541,7 +2564,7 @@ export default function setupResonanceRoutes(
         const activeQuestion = session.data.questions.find((q) => q.id === questionId) ?? null
         if (!activeQuestion) return
         const answerability = getQuestionAnswerability(session.data, questionId)
-        if (!answerability.ok && !(answerability.reason === 'expired' && canAcceptTimeoutAutoSubmit(session.data, payload.autoSubmit))) return
+        if (!answerability.ok) return
         const answer = validateAnswerPayload(payload.answer, activeQuestion)
         if (!answer) return
         const response = upsertResponse(session.data.responses, questionId, studentId, answer)
