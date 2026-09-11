@@ -15,6 +15,15 @@ Track security-relevant boundaries, risks, and mitigation decisions.
 
 ## Notes
 
+- Date: 2026-09-11
+- Area: Resonance student REST and WebSocket authority
+- Threat or risk: Resonance previously trusted a student ID supplied in a REST body/query or WebSocket URL, allowing a caller who learned another ID to read that student's retained answers/private feedback or mutate their response.
+- Control or mitigation: Registration now issues the shared opaque participant capability as an httpOnly, session-scoped cookie. REST state/submission handlers and WebSocket admission resolve the authoritative student from that cookie and reject mismatched client hints. Waiting-room IDs additionally require the accepted-entry participant credential; direct entry receives a server-generated ID.
+- Residual risk: Resonance session mutations remain whole-record writes under the single-writer deployment constraint pending the complete #313 atomic migration. The shared waiting-room participant-token mint boundary remains tracked separately under #352. This is intentionally a clean cutover with no pre-deployment live-session credential migration.
+- Validation (test/review/path): `activities/resonance/server/routes.ts`; `activities/resonance/server/routes.test.ts`; `activities/resonance/playwright/auth.spec.ts`; #341.
+- Follow-up action: Close #341 when PR #372 merges.
+- Owner: Codex
+
 - Date: 2026-08-29
 - Area: shared activity runtime authority boundary
 - Threat or risk: Activities independently treated session IDs, request participant IDs,

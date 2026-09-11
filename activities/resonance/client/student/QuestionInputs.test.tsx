@@ -536,6 +536,49 @@ void test('QuestionView keeps an unsent draft associated with its original quest
   }
 })
 
+void test('QuestionView flushes an edit made inside the final debounce window before the deadline', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const sentDrafts: unknown[] = []
+    const question = {
+      id: 'q1',
+      type: 'free-response' as const,
+      text: 'Explain your reasoning.',
+      order: 0,
+    }
+    const rendered = render(
+      React.createElement(QuestionView, {
+        question,
+        sessionId: 'session-1',
+        studentId: 'student-1',
+        activeQuestionRunStartedAt: 1_000,
+        activeQuestionDeadlineAt: Date.now() + 300,
+        sendMessage: (type: string, payload: unknown) => {
+          if (type === 'resonance:update-draft') sentDrafts.push(payload)
+          return true
+        },
+      }),
+    )
+
+    fireEvent.change(rendered.getByLabelText(/your answer/i), {
+      target: { value: 'Last-second revision' },
+    })
+
+    await waitFor(() => assert.equal(sentDrafts.length, 1), { timeout: 1_000 })
+    assert.deepEqual(sentDrafts[0], {
+      studentId: 'student-1',
+      questionId: 'q1',
+      activeQuestionRunStartedAt: 1_000,
+      answer: { type: 'free-response', text: 'Last-second revision' },
+    })
+    rendered.unmount()
+  } finally {
+    restoreDomEnvironment()
+  }
+})
+
 void test('QuestionView shows only the stem for staged MCQs before choices are revealed', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const { render } = await import('@testing-library/react')

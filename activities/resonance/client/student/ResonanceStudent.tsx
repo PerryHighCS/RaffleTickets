@@ -484,6 +484,7 @@ export default function ResonanceStudent() {
                   questionId: activeQuestion.id,
                 })}
                 activeQuestionRunStartedAt={snapshot.activeQuestionRunStartedAt}
+                activeQuestionDeadlineAt={snapshot.activeQuestionDeadlineAt}
                 disabled={hasExpired}
                 isSubmitted={submittedQuestionIds.has(activeQuestion.id)}
                 submittedMessage={submittedMessage}

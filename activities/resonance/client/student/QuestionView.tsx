@@ -11,6 +11,7 @@ interface Props {
   studentId: string
   initialAnswer?: AnswerPayload | null
   activeQuestionRunStartedAt?: number | null
+  activeQuestionDeadlineAt?: number | null
   disabled?: boolean
   isSubmitted?: boolean
   submittedMessage?: string
@@ -21,6 +22,7 @@ interface Props {
 }
 
 const DRAFT_PUSH_DELAY_MS = 1500
+const DRAFT_DEADLINE_BUFFER_MS = 100
 
 function isSameAnswer(left: AnswerPayload | null, right: AnswerPayload | null): boolean {
   if (left === right) return true
@@ -38,6 +40,7 @@ export default function QuestionView({
   studentId,
   initialAnswer = null,
   activeQuestionRunStartedAt = null,
+  activeQuestionDeadlineAt = null,
   disabled = false,
   isSubmitted = false,
   submittedMessage = 'Answer submitted.',
@@ -112,9 +115,18 @@ export default function QuestionView({
       }
     }
 
+    const remainingBeforeDeadline = activeQuestionDeadlineAt === null
+      ? null
+      : activeQuestionDeadlineAt - Date.now()
+    if (remainingBeforeDeadline !== null && remainingBeforeDeadline <= 0) {
+      return
+    }
+    const pushDelayMs = remainingBeforeDeadline === null
+      ? DRAFT_PUSH_DELAY_MS
+      : Math.max(0, Math.min(DRAFT_PUSH_DELAY_MS, remainingBeforeDeadline - DRAFT_DEADLINE_BUFFER_MS))
     const timeoutId = window.setTimeout(() => {
       sendDraft()
-    }, DRAFT_PUSH_DELAY_MS)
+    }, pushDelayMs)
 
     return () => {
       window.clearTimeout(timeoutId)
@@ -127,7 +139,7 @@ export default function QuestionView({
         sendDraft()
       }
     }
-  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
+  }, [activeQuestionDeadlineAt, activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
 
   async function submitAnswer(
     answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] },
