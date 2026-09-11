@@ -119,6 +119,7 @@ export default function QuestionView({
     }
     if (
       autoSubmittedRunRef.current === activeQuestionRunStartedAt ||
+      submitting ||
       isSubmitted ||
       isWaitingForChoices ||
       draftAnswer === null
@@ -128,7 +129,7 @@ export default function QuestionView({
 
     autoSubmittedRunRef.current = activeQuestionRunStartedAt
     void submitAnswer(draftAnswer, true)
-  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices])
+  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, submitting])
 
   async function submitAnswer(
     answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] },
@@ -153,6 +154,7 @@ export default function QuestionView({
       setDraftAnswer(answer)
       lastSentDraftRef.current = answer
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
+      autoSubmittedRunRef.current = activeQuestionRunStartedAt
       setSubmitting(false)
       return
     }
@@ -176,6 +178,7 @@ export default function QuestionView({
       setDraftAnswer(answer)
       lastSentDraftRef.current = answer
       draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
+      autoSubmittedRunRef.current = activeQuestionRunStartedAt
     } catch {
       setError('Network error — please try again')
     } finally {

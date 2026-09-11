@@ -284,6 +284,52 @@ void test('QuestionView auto-submits a non-empty draft when time expires', async
   }
 })
 
+void test('QuestionView does not auto-submit while a manual submission is pending', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const previousFetch = globalThis.fetch
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const deferredFetch: { resolve: ((response: Response) => void) | null } = { resolve: null }
+    let fetchCount = 0
+    const submitted: unknown[] = []
+    ;(globalThis as { fetch?: typeof fetch }).fetch = (() => {
+      fetchCount += 1
+      return new Promise<Response>((resolve) => {
+        deferredFetch.resolve = resolve
+      })
+    }) as typeof fetch
+
+    const question = { id: 'q1', type: 'free-response' as const, text: 'Explain.', order: 0 }
+    const renderQuestion = (disabled: boolean) => React.createElement(QuestionView, {
+      question,
+      sessionId: 'session-1',
+      studentId: 'student-1',
+      activeQuestionRunStartedAt: 1_000,
+      disabled,
+      sendMessage: () => false,
+      onSubmitted: (_questionId, answer) => submitted.push(answer),
+    })
+    const rendered = render(renderQuestion(false))
+    fireEvent.change(rendered.getByLabelText(/your answer/i), { target: { value: 'Manual answer' } })
+    fireEvent.click(rendered.getByRole('button', { name: /submit answer/i }))
+
+    await waitFor(() => assert.equal(fetchCount, 1))
+    await waitFor(() => assert.equal(rendered.getByRole('button').getAttribute('aria-busy'), 'true'))
+    rendered.rerender(renderQuestion(true))
+    assert.equal(fetchCount, 1)
+
+    assert.ok(deferredFetch.resolve)
+    deferredFetch.resolve({ ok: true, json: async () => ({ ok: true }) } as Response)
+    await waitFor(() => assert.equal(submitted.length, 1))
+    assert.equal(fetchCount, 1)
+    rendered.unmount()
+  } finally {
+    ;(globalThis as { fetch?: typeof fetch }).fetch = previousFetch
+    restoreDomEnvironment()
+  }
+})
+
 void test('QuestionView preserves a student draft when a same-run session update contains an older answer', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const { fireEvent, render, waitFor } = await import('@testing-library/react')
