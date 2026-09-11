@@ -92,6 +92,7 @@ interface ResonanceSocket extends ActiveBitsWebSocket {
 }
 
 const MAX_SET_TIMEOUT_MS = 2_147_483_647
+const DEADLINE_TASK_RETRY_MS = 1_000
 
 function scheduleParticipantCapabilityExpiryClose(
   client: ResonanceSocket,
@@ -1461,6 +1462,44 @@ export default function setupResonanceRoutes(
     handle: DeadlineTaskHandle
   }>()
 
+  function armDeadlineTask(
+    sessionId: string,
+    deadlineAt: number,
+    runStartedAt: number | null,
+    delayMs: number,
+  ): void {
+    const handle = deadlineTaskRunner.schedule(() => {
+      const current = deadlineTasks.get(sessionId)
+      if (!current || current.handle !== handle) return
+
+      const remaining = deadlineAt - deadlineTaskRunner.now()
+      if (remaining > 0) {
+        deadlineTasks.delete(sessionId)
+        armDeadlineTask(sessionId, deadlineAt, runStartedAt, remaining)
+        return
+      }
+
+      void loadResonanceSession(sessionId, true).then((loaded) => {
+        if (loaded !== null) return
+        const latest = deadlineTasks.get(sessionId)
+        if (latest?.handle === handle) deadlineTasks.delete(sessionId)
+      }).catch((error) => {
+        console.error(JSON.stringify({
+          component: 'resonance',
+          event: 'deadline-task-failed',
+          sessionId,
+          error: String(error),
+        }))
+        const latest = deadlineTasks.get(sessionId)
+        if (latest?.handle !== handle) return
+        deadlineTasks.delete(sessionId)
+        armDeadlineTask(sessionId, deadlineAt, runStartedAt, DEADLINE_TASK_RETRY_MS)
+      })
+    }, Math.min(Math.max(0, delayMs), MAX_SET_TIMEOUT_MS))
+    handle.unref?.()
+    deadlineTasks.set(sessionId, { deadlineAt, runStartedAt, handle })
+  }
+
   function reconcileDeadlineTask(session: ResonanceSession): void {
     const existing = deadlineTasks.get(session.id)
     const deadlineAt = session.data.activeQuestionDeadlineAt
@@ -1479,25 +1518,14 @@ export default function setupResonanceRoutes(
       deadlineTaskRunner.cancel(existing.handle)
     }
 
-    const handle = deadlineTaskRunner.schedule(() => {
-      const current = deadlineTasks.get(session.id)
-      if (!current || current.handle !== handle) return
-      deadlineTasks.delete(session.id)
-      void loadResonanceSession(session.id).catch((error) => {
-        console.error(JSON.stringify({
-          component: 'resonance',
-          event: 'deadline-task-failed',
-          sessionId: session.id,
-          error: String(error),
-        }))
-      })
-    }, Math.max(0, deadlineAt - deadlineTaskRunner.now()))
-    handle.unref?.()
-    deadlineTasks.set(session.id, { deadlineAt, runStartedAt, handle })
+    armDeadlineTask(session.id, deadlineAt, runStartedAt, deadlineAt - deadlineTaskRunner.now())
   }
 
-  async function loadResonanceSession(sessionId: string): Promise<ResonanceSession | null> {
-    const session = asResonanceSession(await sessions.get(sessionId))
+  async function loadResonanceSession(sessionId: string, strict = false): Promise<ResonanceSession | null> {
+    const readSession = strict && sessions.getStrict
+      ? sessions.getStrict.bind(sessions)
+      : sessions.get.bind(sessions)
+    const session = asResonanceSession(await readSession(sessionId))
     if (!session) {
       return null
     }
@@ -1772,10 +1800,12 @@ export default function setupResonanceRoutes(
     }
 
     session.data.students[studentId] = student
-    const capability = issueActivityCapability(session, 'participant', studentId)
+    const capability = existingPrincipalId
+      ? null
+      : issueActivityCapability(session, 'participant', studentId)
     await sessions.set(sessionId, session)
 
-    if (res.cookie) {
+    if (capability && res.cookie) {
       writeActivityCapabilityCookie({ cookie: res.cookie.bind(res) }, sessionId, 'participant', capability.token)
     }
     res.setHeader?.('Cache-Control', 'no-store')

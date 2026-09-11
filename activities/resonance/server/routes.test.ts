@@ -328,6 +328,23 @@ void test('student registration issues an httpOnly capability and REST routes en
     [registerRes.cookies[0]!.name]: registerRes.cookies[0]!.value,
   }
 
+  const capabilityCountBeforeReload = Object.keys(
+    ((await sessions.get(session.id))?.data as { activityCapabilities?: Record<string, unknown> })
+      .activityCapabilities ?? {},
+  ).length
+  const reloadRes = createResponse()
+  await registerHandler?.({
+    params: { sessionId: session.id },
+    body: { name: 'New Student', studentId: registeredStudentId },
+    cookies: authenticatedCookies,
+  }, reloadRes)
+  assert.equal(reloadRes.statusCode, 200)
+  assert.equal(reloadRes.cookies.length, 0, 'an authenticated reload reuses its existing capability')
+  assert.equal(Object.keys(
+    ((await sessions.get(session.id))?.data as { activityCapabilities?: Record<string, unknown> })
+      .activityCapabilities ?? {},
+  ).length, capabilityCountBeforeReload)
+
   const stateRes = createResponse()
   await stateHandler?.({
     params: { sessionId: session.id },
@@ -478,6 +495,103 @@ void test('server deadline task finalizes and broadcasts drafts without post-dea
   assert.deepEqual(stored?.data.activeQuestionIds, [])
   assert.deepEqual(stored?.data.responseDrafts, {})
   assert.equal(messages.some((message) => message.type === 'resonance:instructor-state'), true)
+
+  await sessions.close()
+})
+
+void test('server deadline task segments delays above the Node timer maximum', async () => {
+  const app = createMockApp()
+  const sessions = createSessionStore(null)
+  const session = createMultiQuestionSession()
+  let now = 1_000
+  session.data.activeQuestionId = 'q1'
+  session.data.activeQuestionIds = ['q1']
+  session.data.activeQuestionRunStartedAt = now
+  session.data.activeQuestionDeadlineAt = now + 2_147_483_647 + 500
+  await sessions.set(session.id, session)
+
+  const scheduled: Array<{ callback: () => void; delayMs: number; cancelled: boolean }> = []
+  setupResonanceRoutes(app, sessions, createMockWs(), {
+    now: () => now,
+    schedule(callback, delayMs) {
+      const handle = { callback, delayMs, cancelled: false, unref() {} }
+      scheduled.push(handle)
+      return handle
+    },
+    cancel(handle) {
+      ;(handle as { cancelled: boolean }).cancelled = true
+    },
+  })
+
+  await app.handlers.get['/api/resonance/:sessionId/state']?.(
+    { params: { sessionId: session.id } },
+    createResponse(),
+  )
+  assert.equal(scheduled[0]?.delayMs, 2_147_483_647)
+
+  now += 2_147_483_647
+  scheduled[0]?.callback()
+  assert.equal(scheduled[1]?.delayMs, 500)
+
+  await sessions.close()
+})
+
+void test('server deadline task retries after a strict session read failure', async () => {
+  const app = createMockApp()
+  const sessions = createSessionStore(null)
+  const session = createMultiQuestionSession()
+  let now = 1_000
+  session.data.activeQuestionId = 'q1'
+  session.data.activeQuestionIds = ['q1']
+  session.data.activeQuestionRunStartedAt = 800
+  session.data.activeQuestionDeadlineAt = 1_100
+  session.data.responseDrafts = {
+    'q1:student1': {
+      questionId: 'q1',
+      studentId: 'student1',
+      updatedAt: 1_050,
+      answer: { type: 'free-response', text: 'Retry this persisted draft' },
+    },
+  }
+  await sessions.set(session.id, session)
+
+  let strictReads = 0
+  sessions.getStrict = async (sessionId) => {
+    strictReads += 1
+    if (strictReads === 1) throw new Error('simulated Valkey read failure')
+    return sessions.get(sessionId)
+  }
+  const scheduled: Array<{ callback: () => void; delayMs: number; cancelled: boolean }> = []
+  setupResonanceRoutes(app, sessions, createMockWs(), {
+    now: () => now,
+    schedule(callback, delayMs) {
+      const handle = { callback, delayMs, cancelled: false, unref() {} }
+      scheduled.push(handle)
+      return handle
+    },
+    cancel(handle) {
+      ;(handle as { cancelled: boolean }).cancelled = true
+    },
+  })
+
+  await app.handlers.get['/api/resonance/:sessionId/state']?.(
+    { params: { sessionId: session.id } },
+    createResponse(),
+  )
+  now = 1_100
+  console.info('[TEST] a transient strict deadline read failure is expected and must re-arm the task')
+  scheduled[0]?.callback()
+  await waitForCondition(() => scheduled.length === 2)
+  assert.equal(scheduled[1]?.delayMs, 1_000)
+  assert.deepEqual((await sessions.get(session.id))?.data.responses, [])
+
+  now = 2_100
+  scheduled[1]?.callback()
+  await waitForCondition(async () => {
+    const stored = await sessions.get(session.id)
+    return Array.isArray(stored?.data.responses) && stored.data.responses.length === 1
+  })
+  assert.equal(strictReads, 2)
 
   await sessions.close()
 })
