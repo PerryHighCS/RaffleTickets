@@ -2333,7 +2333,7 @@ void test('submit-answer route updates an existing response when a question is r
   await sessions.close()
 })
 
-void test('reactivating a question marks prior answers as working instead of submitted in the instructor snapshot', async () => {
+void test('reactivating a question keeps prior answers editable for students and marks them working for instructors', async () => {
   const app = createMockApp()
   const ws = createMockWs()
   const sessions = createSessionStore(null)
@@ -2410,7 +2410,12 @@ void test('reactivating a question marks prior answers as working instead of sub
   assert.equal(studentStateRes.statusCode, 200)
   assert.deepEqual(
     (studentStateRes.body as { submittedAnswers?: Record<string, unknown> }).submittedAnswers,
-    {},
+    {
+      q1: {
+        type: 'free-response',
+        text: 'First run answer',
+      },
+    },
   )
 
   const responsesRes = createResponse()

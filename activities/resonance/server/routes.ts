@@ -1040,10 +1040,7 @@ function buildStudentSnapshotWithMode(
       ? {}
       : Object.fromEntries(
           session.data.responses
-            .filter((response) =>
-              response.studentId === viewerStudentId &&
-              !isStaleActiveResponse(session.data, response, liveActiveQuestionIdSet),
-            )
+            .filter((response) => response.studentId === viewerStudentId)
             .map((response) => [response.questionId, response.answer] satisfies [string, Response['answer']]),
         )
   const reviewedResponses =
