@@ -277,6 +277,15 @@ void test('QuestionView auto-submits a non-empty draft when time expires', async
         },
       })
     })
+    assert.deepEqual(messages, [{
+      type: 'resonance:submit-answer',
+      payload: {
+        studentId: 'student-1',
+        questionId: 'q1',
+        answer: { type: 'free-response', text: 'Work preserved at timeout' },
+        autoSubmit: true,
+      },
+    }])
 
     rendered.unmount()
   } finally {

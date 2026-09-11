@@ -44,6 +44,20 @@ export function resolveNextSelfPacedQuestionId(params: {
   return currentIndex >= 0 ? currentQuestionId : questionIds[0] ?? null
 }
 
+export function clearLiveQuestionSubmission(params: {
+  selfPacedMode: boolean
+  submittedQuestionIds: Set<string>
+  questionId: string
+}): Set<string> {
+  if (params.selfPacedMode || !params.submittedQuestionIds.has(params.questionId)) {
+    return params.submittedQuestionIds
+  }
+
+  const next = new Set(params.submittedQuestionIds)
+  next.delete(params.questionId)
+  return next
+}
+
 export function resolveSelfPacedSubmittedMessage(params: {
   questionIds: string[]
   submittedQuestionIds: Set<string>
@@ -209,6 +223,16 @@ export default function ResonanceStudent() {
     registered && sessionId ? sessionId : null,
     studentId,
   )
+
+  useEffect(() => {
+    setSelectedQuestionId(null)
+    setSubmittedQuestionIds(new Set())
+    setSubmittedAnswers({})
+    setSubmissionAnnouncement(null)
+    previousActiveQuestionIdsRef.current = []
+    previousActiveQuestionRunStartedAtRef.current = null
+    hasObservedSnapshotRef.current = false
+  }, [sessionId, studentId])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -401,7 +425,14 @@ export default function ResonanceStudent() {
                       <button
                         key={question.id}
                         type="button"
-                        onClick={() => setSelectedQuestionId(question.id)}
+                        onClick={() => {
+                          setSubmittedQuestionIds((current) => clearLiveQuestionSubmission({
+                            selfPacedMode: snapshot.selfPacedMode,
+                            submittedQuestionIds: current,
+                            questionId: question.id,
+                          }))
+                          setSelectedQuestionId(question.id)
+                        }}
                         className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
                           isSelected
                             ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'

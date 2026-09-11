@@ -51,9 +51,11 @@ export default function QuestionView({
   const initialAnswerRef = useRef(initialAnswer)
   const synchronizedInitialAnswerRef = useRef(initialAnswer)
   const autoSubmittedRunRef = useRef<number | null>(null)
+  const disabledRef = useRef(disabled)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
   const draftAnswerRunStartedAtRef = useRef(activeQuestionRunStartedAt)
   initialAnswerRef.current = initialAnswer
+  disabledRef.current = disabled
   activeQuestionRunStartedAtRef.current = activeQuestionRunStartedAt
   const isWaitingForChoices =
     question.type === 'multiple-choice' && question.choicesRevealed === false
@@ -105,12 +107,13 @@ export default function QuestionView({
       if (
         activeQuestionRunStartedAtRef.current === activeQuestionRunStartedAt &&
         draftAnswerRunStartedAt === activeQuestionRunStartedAt &&
+        !disabledRef.current &&
         !isSameAnswer(pendingDraft, lastSentDraftRef.current)
       ) {
         sendDraft()
       }
     }
-  }, [activeQuestionRunStartedAt, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
+  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
 
   useEffect(() => {
     if (!disabled) {

@@ -1,10 +1,32 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolveNextSelfPacedQuestionId } from './ResonanceStudent.js'
+import { clearLiveQuestionSubmission } from './ResonanceStudent.js'
 import { resolveQuestionStatusBadge } from './ResonanceStudent.js'
 import { resolveSubmissionAnnouncement } from './ResonanceStudent.js'
 import { resolveSelfPacedSubmittedMessage } from './ResonanceStudent.js'
 import { hasActiveQuestionRunRestart } from './ResonanceStudent.js'
+
+void test('clearLiveQuestionSubmission unlocks a revisited live question only', () => {
+  const submittedQuestionIds = new Set(['q1', 'q2'])
+
+  assert.deepEqual(
+    clearLiveQuestionSubmission({
+      selfPacedMode: false,
+      submittedQuestionIds,
+      questionId: 'q1',
+    }),
+    new Set(['q2']),
+  )
+  assert.equal(
+    clearLiveQuestionSubmission({
+      selfPacedMode: true,
+      submittedQuestionIds,
+      questionId: 'q1',
+    }),
+    submittedQuestionIds,
+  )
+})
 
 void test('resolveNextSelfPacedQuestionId advances to the next unanswered question', () => {
   assert.equal(
