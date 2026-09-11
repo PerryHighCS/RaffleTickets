@@ -54,7 +54,7 @@ export default function QuestionView({
   const submissionAttemptRef = useRef(0)
   const disabledRef = useRef(disabled)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
-  const draftAnswerRunStartedAtRef = useRef(activeQuestionRunStartedAt)
+  const draftAnswerRunStartedAtRef = useRef<number | null>(null)
   initialAnswerRef.current = initialAnswer
   disabledRef.current = disabled
   activeQuestionRunStartedAtRef.current = activeQuestionRunStartedAt
@@ -65,12 +65,16 @@ export default function QuestionView({
     setDraftAnswer(initialAnswerRef.current)
     lastSentDraftRef.current = initialAnswerRef.current
     synchronizedInitialAnswerRef.current = initialAnswerRef.current
+    draftAnswerRunStartedAtRef.current = null
   }, [question.id, activeQuestionRunStartedAt, isSubmitted])
 
   useEffect(() => {
     submissionAttemptRef.current += 1
     setSubmitting(false)
     setError(null)
+    return () => {
+      submissionAttemptRef.current += 1
+    }
   }, [question.id, activeQuestionRunStartedAt])
 
   useEffect(() => {
@@ -232,6 +236,7 @@ export default function QuestionView({
           onDraftChange={(text) => {
             const trimmed = text.trim()
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
+            autoSubmittedRunRef.current = null
             setDraftAnswer(trimmed.length > 0 ? { type: 'free-response', text: trimmed } : null)
           }}
           onSubmit={(text) => submitAnswer({ type: 'free-response', text })}
@@ -247,6 +252,7 @@ export default function QuestionView({
           value={draftAnswer?.type === 'multiple-choice' ? draftAnswer.selectedOptionIds : []}
           onDraftChange={(selectedOptionIds) => {
             draftAnswerRunStartedAtRef.current = activeQuestionRunStartedAt
+            autoSubmittedRunRef.current = null
             setDraftAnswer(selectedOptionIds.length > 0 ? { type: 'multiple-choice', selectedOptionIds } : null)
           }}
           onSubmit={(selectedOptionIds) => submitAnswer({ type: 'multiple-choice', selectedOptionIds })}

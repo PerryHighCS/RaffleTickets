@@ -324,6 +324,56 @@ void test('QuestionView does not auto-submit an unchanged answer retained from a
   }
 })
 
+void test('QuestionView auto-submits a current-run edit after an earlier submission', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const messages: Array<{ type: string; payload: unknown }> = []
+    const question = { id: 'q1', type: 'free-response' as const, text: 'Explain.', order: 0 }
+    const renderQuestion = (disabled: boolean) => React.createElement(QuestionView, {
+      question,
+      sessionId: 'session-1',
+      studentId: 'student-1',
+      activeQuestionRunStartedAt: 1_000,
+      disabled,
+      sendMessage: (type: string, payload: unknown) => {
+        messages.push({ type, payload })
+        return true
+      },
+    })
+    const rendered = render(renderQuestion(false))
+    const answerInput = rendered.getByLabelText(/your answer/i)
+    fireEvent.change(answerInput, { target: { value: 'Earlier answer' } })
+    fireEvent.click(rendered.getByRole('button', { name: /submit answer/i }))
+    fireEvent.change(answerInput, { target: { value: 'Revised answer' } })
+    rendered.rerender(renderQuestion(true))
+
+    await waitFor(() => assert.deepEqual(messages.filter((message) => message.type === 'resonance:submit-answer'), [
+      {
+        type: 'resonance:submit-answer',
+        payload: {
+          studentId: 'student-1',
+          questionId: 'q1',
+          answer: { type: 'free-response', text: 'Earlier answer' },
+        },
+      },
+      {
+        type: 'resonance:submit-answer',
+        payload: {
+          studentId: 'student-1',
+          questionId: 'q1',
+          answer: { type: 'free-response', text: 'Revised answer' },
+          autoSubmit: true,
+        },
+      },
+    ]))
+    rendered.unmount()
+  } finally {
+    restoreDomEnvironment()
+  }
+})
+
 void test('QuestionView does not auto-submit while a manual submission is pending', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const previousFetch = globalThis.fetch

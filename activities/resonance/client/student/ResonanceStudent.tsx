@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import {
   persistSessionParticipantIdentity,
@@ -156,7 +156,7 @@ export default function ResonanceStudent() {
   const previousActiveQuestionRunStartedAtRef = useRef<number | null>(null)
   const hasObservedSnapshotRef = useRef(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!sessionId) return
     mountedRef.current = true
 
@@ -224,7 +224,7 @@ export default function ResonanceStudent() {
     studentId,
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSelectedQuestionId(null)
     setSubmittedQuestionIds(new Set())
     setSubmittedAnswers({})
