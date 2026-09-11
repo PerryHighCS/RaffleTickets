@@ -50,6 +50,7 @@ export default function QuestionView({
   const lastSentDraftRef = useRef<AnswerPayload | null>(null)
   const initialAnswerRef = useRef(initialAnswer)
   const synchronizedInitialAnswerRef = useRef(initialAnswer)
+  const autoSubmittedRunRef = useRef<number | null>(null)
   const activeQuestionRunStartedAtRef = useRef(activeQuestionRunStartedAt)
   const draftAnswerRunStartedAtRef = useRef(activeQuestionRunStartedAt)
   initialAnswerRef.current = initialAnswer
@@ -111,8 +112,29 @@ export default function QuestionView({
     }
   }, [activeQuestionRunStartedAt, draftAnswer, isSubmitted, isWaitingForChoices, question.id, sendMessage, studentId])
 
-  async function submitAnswer(answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] }) {
-    if (disabled || isSubmitted || isWaitingForChoices) {
+  useEffect(() => {
+    if (!disabled) {
+      autoSubmittedRunRef.current = null
+      return
+    }
+    if (
+      autoSubmittedRunRef.current === activeQuestionRunStartedAt ||
+      isSubmitted ||
+      isWaitingForChoices ||
+      draftAnswer === null
+    ) {
+      return
+    }
+
+    autoSubmittedRunRef.current = activeQuestionRunStartedAt
+    void submitAnswer(draftAnswer, true)
+  }, [activeQuestionRunStartedAt, disabled, draftAnswer, isSubmitted, isWaitingForChoices])
+
+  async function submitAnswer(
+    answer: { type: 'free-response'; text: string } | { type: 'multiple-choice'; selectedOptionIds: string[] },
+    autoSubmit = false,
+  ) {
+    if ((disabled && !autoSubmit) || isSubmitted || isWaitingForChoices) {
       return
     }
 
@@ -123,6 +145,7 @@ export default function QuestionView({
       studentId,
       questionId: question.id,
       answer,
+      ...(autoSubmit ? { autoSubmit: true } : {}),
     }) ?? false
 
     if (sentViaWs) {
@@ -138,7 +161,7 @@ export default function QuestionView({
       const resp = await fetch(`/api/resonance/${sessionId}/submit-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId, questionId: question.id, answer }),
+        body: JSON.stringify({ studentId, questionId: question.id, answer, ...(autoSubmit ? { autoSubmit: true } : {}) }),
       })
 
       const data = (await resp.json()) as { ok?: boolean; error?: string }

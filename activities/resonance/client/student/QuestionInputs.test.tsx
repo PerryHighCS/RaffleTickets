@@ -236,6 +236,54 @@ void test('QuestionView submits over websocket first when sendMessage is availab
   }
 })
 
+void test('QuestionView auto-submits a non-empty draft when time expires', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const { fireEvent, render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const messages: Array<{ type: string; payload: unknown }> = []
+    const question = {
+      id: 'q1',
+      type: 'free-response' as const,
+      text: 'Explain your reasoning.',
+      order: 0,
+    }
+    const renderQuestion = (disabled: boolean) => React.createElement(QuestionView, {
+      question,
+      sessionId: 'session-1',
+      studentId: 'student-1',
+      activeQuestionRunStartedAt: 1_000,
+      disabled,
+      sendMessage: (type: string, payload: unknown) => {
+        messages.push({ type, payload })
+        return true
+      },
+    })
+    const rendered = render(renderQuestion(false))
+
+    fireEvent.change(rendered.getByLabelText(/your answer/i), {
+      target: { value: 'Work preserved at timeout' },
+    })
+    rendered.rerender(renderQuestion(true))
+
+    await waitFor(() => {
+      assert.deepEqual(messages.find((message) => message.type === 'resonance:submit-answer'), {
+        type: 'resonance:submit-answer',
+        payload: {
+          studentId: 'student-1',
+          questionId: 'q1',
+          answer: { type: 'free-response', text: 'Work preserved at timeout' },
+          autoSubmit: true,
+        },
+      })
+    })
+
+    rendered.unmount()
+  } finally {
+    restoreDomEnvironment()
+  }
+})
+
 void test('QuestionView preserves a student draft when a same-run session update contains an older answer', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const { fireEvent, render, waitFor } = await import('@testing-library/react')

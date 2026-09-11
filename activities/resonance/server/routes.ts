@@ -389,6 +389,17 @@ type QuestionAnswerability =
   | { ok: true }
   | { ok: false; reason: 'expired' | 'choices-hidden' | 'inactive' }
 
+const TIMEOUT_AUTOSUBMIT_GRACE_MS = 5_000
+
+function canAcceptTimeoutAutoSubmit(sessionData: ResonanceSessionData, autoSubmit: unknown): boolean {
+  const deadlineAt = sessionData.activeQuestionDeadlineAt
+  return (
+    autoSubmit === true &&
+    deadlineAt !== null &&
+    Date.now() - deadlineAt <= TIMEOUT_AUTOSUBMIT_GRACE_MS
+  )
+}
+
 function getQuestionAnswerability(sessionData: ResonanceSessionData, questionId: string): QuestionAnswerability {
   if (sessionData.activeQuestionDeadlineAt !== null && Date.now() >= sessionData.activeQuestionDeadlineAt) {
     return { ok: false, reason: 'expired' }
@@ -1614,7 +1625,7 @@ export default function setupResonanceRoutes(
     }
 
     const answerability = getQuestionAnswerability(session.data, questionId)
-    if (!answerability.ok) {
+    if (!answerability.ok && !(answerability.reason === 'expired' && canAcceptTimeoutAutoSubmit(session.data, body.autoSubmit))) {
       res.status(409).json({
         error: resolveAnswerabilityErrorMessage(answerability.reason),
       })
@@ -2529,7 +2540,8 @@ export default function setupResonanceRoutes(
         if (!questionId || !availableQuestionIds.includes(questionId)) return
         const activeQuestion = session.data.questions.find((q) => q.id === questionId) ?? null
         if (!activeQuestion) return
-        if (!isCurrentStagedQuestionAnswerable(session.data, questionId)) return
+        const answerability = getQuestionAnswerability(session.data, questionId)
+        if (!answerability.ok && !(answerability.reason === 'expired' && canAcceptTimeoutAutoSubmit(session.data, payload.autoSubmit))) return
         const answer = validateAnswerPayload(payload.answer, activeQuestion)
         if (!answer) return
         const response = upsertResponse(session.data.responses, questionId, studentId, answer)

@@ -1864,6 +1864,24 @@ void test('staged activate-question hides MCQ choices until reveal and then acce
   assert.equal(expiredSubmitRes.statusCode, 409)
   assert.deepEqual(expiredSubmitRes.body, { error: 'time is up for this question' })
 
+  const timeoutAutoSubmitRes = createResponse()
+  await submitHandler?.(
+    {
+      params: { sessionId: session.id },
+      body: {
+        studentId: 'student1',
+        questionId: 'q2',
+        answer: {
+          type: 'multiple-choice',
+          selectedOptionIds: ['q2_b'],
+        },
+        autoSubmit: true,
+      },
+    },
+    timeoutAutoSubmitRes,
+  )
+  assert.equal(timeoutAutoSubmitRes.statusCode, 200)
+
   const resetDeadlineSession = await sessions.get(session.id)
   if (resetDeadlineSession) {
     resetDeadlineSession.data.activeQuestionDeadlineAt = Date.now() + 45_000
