@@ -133,6 +133,7 @@ export default function QuestionView({
       submitting ||
       isSubmitted ||
       isWaitingForChoices ||
+      draftAnswerRunStartedAtRef.current !== activeQuestionRunStartedAt ||
       draftAnswer === null
     ) {
       return

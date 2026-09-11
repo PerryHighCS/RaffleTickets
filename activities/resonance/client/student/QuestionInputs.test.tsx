@@ -294,6 +294,36 @@ void test('QuestionView auto-submits a non-empty draft when time expires', async
   }
 })
 
+void test('QuestionView does not auto-submit an unchanged answer retained from an earlier run', async () => {
+  const restoreDomEnvironment = installDomEnvironment()
+  const { render, waitFor } = await import('@testing-library/react')
+
+  try {
+    const messages: Array<{ type: string; payload: unknown }> = []
+    const question = { id: 'q1', type: 'free-response' as const, text: 'Explain.', order: 0 }
+    const renderQuestion = (activeQuestionRunStartedAt: number, disabled: boolean) => React.createElement(QuestionView, {
+      question,
+      sessionId: 'session-1',
+      studentId: 'student-1',
+      initialAnswer: { type: 'free-response', text: 'Answer from the earlier run' },
+      activeQuestionRunStartedAt,
+      disabled,
+      sendMessage: (type: string, payload: unknown) => {
+        messages.push({ type, payload })
+        return true
+      },
+    })
+    const rendered = render(renderQuestion(1_000, false))
+    rendered.rerender(renderQuestion(2_000, true))
+
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+    await waitFor(() => assert.deepEqual(messages, []))
+    rendered.unmount()
+  } finally {
+    restoreDomEnvironment()
+  }
+})
+
 void test('QuestionView does not auto-submit while a manual submission is pending', async () => {
   const restoreDomEnvironment = installDomEnvironment()
   const previousFetch = globalThis.fetch
